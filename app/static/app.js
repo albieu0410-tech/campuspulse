@@ -460,7 +460,7 @@ function renderLegCard(leg) {
   const to = leg.destination && leg.destination.name ? leg.destination.name : "End";
   const dep = timeShort(leg.departure);
   const arr = timeShort(leg.arrival);
-  const rawLine = (leg.line && leg.line.name) || leg.mode || "Travel";
+  const rawLine = (leg.line && leg.line.name) || leg.mode || "Walk";
   const lineName = rawLine.toLowerCase() === "walk" ? "Walk" : rawLine;
   const product = legProduct(leg);
   const meta = productMeta(product);
@@ -468,15 +468,22 @@ function renderLegCard(leg) {
   const logo = meta.logo
     ? `<img src="${meta.logo}" alt="${escapeHtml(meta.label)}" class="h-4 w-auto" onerror="this.style.display='none'" />`
     : "";
+  const showMeta = product !== "walk";
+  const metaSpan = showMeta
+    ? `<span class="text-slate-500">${escapeHtml(meta.label)}</span>`
+    : "";
+  const timeSpan = showMeta
+    ? `<div class="text-slate-600">${escapeHtml(dep)}${arr ? " - " + escapeHtml(arr) : ""}</div>`
+    : "";
   return `
     <div class="rounded-xl border p-3" style="border-color:${color}66;background:linear-gradient(180deg, ${color}33, #f8fafc);">
       <div class="flex items-center justify-between text-sm">
         <div class="flex items-center gap-2">
           ${logo}
           <span class="font-semibold">${escapeHtml(lineName)}</span>
-          <span class="text-slate-500">${escapeHtml(meta.label)}</span>
+          ${metaSpan}
         </div>
-        <div class="text-slate-600">${escapeHtml(dep)}${arr ? " - " + escapeHtml(arr) : ""}</div>
+        ${timeSpan}
       </div>
       <div class="mt-1 text-sm text-slate-700">${escapeHtml(from)} -> ${escapeHtml(to)}</div>
     </div>
@@ -499,8 +506,10 @@ async function loadRoute() {
     return;
   }
   try {
-    const fromStop = await resolveLocation(from);
-    const toStop = await resolveLocation(to);
+    let fromStop = await resolveLocation(from);
+    let toStop = await resolveLocation(to);
+    fromStop = await normalizeToNearestStop(fromStop);
+    toStop = await normalizeToNearestStop(toStop);
     const params = new URLSearchParams();
     if (fromStop.id && toStop.id) {
       params.set("from", fromStop.id);
@@ -568,6 +577,9 @@ async function loadRoute() {
         fromInput.value = "Campus Jungfernsee";
         toInput.value = userHomeLocation || "Home";
       } else {
+        if (fromStop && fromStop.name) {
+          fromInput.value = fromStop.name;
+        }
         toInput.value = "Campus Jungfernsee";
       }
     }
@@ -611,6 +623,22 @@ if (swapBtn) {
   swapBtn.addEventListener("click", () => {
     routeMode = routeMode === "toCampus" ? "return" : "toCampus";
     updateRouteModeUI();
+  });
+}
+
+const fromInputEl = document.getElementById("fromInput");
+if (fromInputEl) {
+  fromInputEl.addEventListener("blur", async () => {
+    if (routeMode !== "toCampus") return;
+    const value = (fromInputEl.value || "").trim();
+    if (!value) return;
+    try {
+      let loc = await resolveLocation(value);
+      loc = await normalizeToNearestStop(loc);
+      if (loc && loc.name) {
+        fromInputEl.value = loc.name;
+      }
+    } catch {}
   });
 }
 
@@ -674,6 +702,21 @@ async function resolveStopByCoords(lat, lon) {
     name: stop.name || "Nearby stop",
     coords: extractCoords(stop),
   };
+}
+
+async function normalizeToNearestStop(loc) {
+  if (!loc || loc.id) return loc;
+  if (!loc.coords) return loc;
+  try {
+    const stop = await resolveStopByCoords(loc.coords[0], loc.coords[1]);
+    return {
+      id: stop.id,
+      name: stop.name || loc.name,
+      coords: stop.coords || loc.coords,
+    };
+  } catch {
+    return loc;
+  }
 }
 
 const useLocationBtn = document.getElementById("btnUseLocation");
