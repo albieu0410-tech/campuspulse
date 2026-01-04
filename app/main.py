@@ -473,7 +473,7 @@ def notify_daily_test(request: Request):
         origin = resolve_location(home)
         destination = resolve_location("Campus Jungfernsee")
         journey = build_journey(origin, destination, prefs or {})
-    html = build_journey_email(user["email"], classes, journey)
+    html = build_journey_email(user["email"], classes, journey, "Route to Campus Jungfernsee")
     send_brevo_email(user["email"], "CampusPulse daily reminder (test)", html)
     return {"ok": True}
 
@@ -587,7 +587,12 @@ def build_arrival_datetime(arrival_time_str: Optional[str], timing_pref: str) ->
     return target + timedelta(minutes=offset)
 
 
-def build_journey_email(user_email: str, classes: list[dict], journey: Optional[dict]) -> str:
+def build_journey_email(
+    user_email: str,
+    classes: list[dict],
+    journey: Optional[dict],
+    route_title: str,
+) -> str:
     class_rows = ""
     for c in classes:
         start_str = c["start_time"].strftime("%H:%M")
@@ -609,7 +614,7 @@ def build_journey_email(user_email: str, classes: list[dict], journey: Optional[
             dest = leg.get("destination", {}).get("name") or "End"
             leg_rows += f"<tr><td>{mode}</td><td>{dep}-{arr}</td><td>{origin} → {dest}</td></tr>"
         journey_html = f"""
-          <h3 style="margin:20px 0 8px;">Route to Campus Jungfernsee</h3>
+          <h3 style="margin:20px 0 8px;">{route_title}</h3>
           <table style="width:100%;border-collapse:collapse;">
             <tr><th align="left">Line</th><th align="left">Time</th><th align="left">Segment</th></tr>
             {leg_rows}
@@ -619,7 +624,7 @@ def build_journey_email(user_email: str, classes: list[dict], journey: Optional[
     return f"""
     <div style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.4;">
       <h2 style="margin:0 0 8px;">CampusPulse Daily Reminder</h2>
-      <p>Good morning {user_email}, here is your schedule for today.</p>
+      <p>Hello {user_email}, here is your schedule for today.</p>
       <h3 style="margin:16px 0 8px;">Classes</h3>
       <table style="width:100%;border-collapse:collapse;">
         <tr><th align="left">Time</th><th align="left">Course</th><th align="left">Location</th></tr>
@@ -701,7 +706,7 @@ def send_daily_emails():
                 origin = resolve_location(home)
                 destination = resolve_location("Campus Jungfernsee")
                 journey = build_journey(origin, destination, prefs or {})
-            html = build_journey_email(email, classes, journey)
+            html = build_journey_email(email, classes, journey, "Route to Campus Jungfernsee")
             try:
                 send_brevo_email(email, "CampusPulse daily reminder", html)
             except Exception:
@@ -762,7 +767,7 @@ def send_return_reminders():
                 destination = resolve_location(home)
                 journey = build_journey(origin, destination, prefs or {})
             classes = classes_for_day(conn, user_id, today)
-            html = build_journey_email(email, classes, journey)
+            html = build_journey_email(email, classes, journey, "Route home")
             try:
                 send_brevo_email(email, "CampusPulse reminder: time to head home", html)
             except Exception:

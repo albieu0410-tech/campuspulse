@@ -229,7 +229,6 @@ let map;
 let routeLayers = [];
 let startMarker;
 let endMarker;
-let destinationStop;
 let routeMode = "toCampus";
 let userHomeLocation = "";
 function initMap() {
@@ -511,6 +510,33 @@ if (routeBtn) {
   routeBtn.addEventListener("click", loadRoute);
 }
 
+function updateRouteModeUI() {
+  const fromInput = document.getElementById("fromInput");
+  const toInput = document.getElementById("toInput");
+  if (!fromInput || !toInput) return;
+  if (routeMode === "return") {
+    fromInput.value = "Campus Jungfernsee";
+    fromInput.readOnly = true;
+    toInput.value = userHomeLocation || "Home";
+    toInput.readOnly = true;
+  } else {
+    fromInput.readOnly = false;
+    if (!fromInput.value && userHomeLocation) {
+      fromInput.value = userHomeLocation;
+    }
+    toInput.value = "Campus Jungfernsee";
+    toInput.readOnly = true;
+  }
+}
+
+const swapBtn = document.getElementById("btnSwapRoute");
+if (swapBtn) {
+  swapBtn.addEventListener("click", () => {
+    routeMode = routeMode === "toCampus" ? "return" : "toCampus";
+    updateRouteModeUI();
+  });
+}
+
 
 async function resolveLocation(query) {
   const data = await api(`/api/bvg/locations?query=${encodeURIComponent(query)}&results=5`);
@@ -607,9 +633,6 @@ if (useLocationBtn) {
 }
 
 initMap();
-resolveLocation("Campus Jungfernsee").then((stop) => {
-  destinationStop = stop;
-}).catch(() => {});
 loadMe();
 loadPreferences();
 loadClasses();
