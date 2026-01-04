@@ -29,7 +29,12 @@ async function loadClasses() {
     }
     tbody.innerHTML = items.map(c => `
       <tr class="border-b last:border-b-0">
-        <td class="py-2 pr-2 font-medium">${escapeHtml(c.course_name)}</td>
+        <td class="py-2 pr-2 font-medium">
+          <span class="inline-flex items-center gap-2">
+            ${c.is_recurring ? '<svg viewBox="0 0 24 24" class="h-4 w-4 text-slate-500" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>' : ""}
+            ${escapeHtml(c.course_name)}
+          </span>
+        </td>
         <td class="py-2 pr-2 text-slate-700">${fmt(c.start_time)}</td>
         <td class="py-2 pr-2 text-slate-700">${c.end_time ? fmt(c.end_time) : "-"}</td>
         <td class="py-2 pr-2 text-slate-700">${escapeHtml(c.location)}</td>
@@ -132,6 +137,7 @@ classForm.addEventListener("submit", async (ev) => {
   const start_time_local = document.getElementById("startTime").value;
   const end_time_local = document.getElementById("endTime").value;
   const location = document.getElementById("location").value.trim();
+  const is_recurring = document.getElementById("repeatWeekly").checked;
 
   // datetime-local returns "YYYY-MM-DDTHH:mm" (no timezone).
   // We'll send it as ISO string with seconds for Postgres parsing.
@@ -144,7 +150,7 @@ classForm.addEventListener("submit", async (ev) => {
     await api(path, {
       method,
       headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({ course_name, start_time, end_time, location })
+      body: JSON.stringify({ course_name, start_time, end_time, location, is_recurring })
     });
     resetEditForm();
     await loadClasses();
@@ -166,6 +172,7 @@ function startEdit(row) {
   document.getElementById("startTime").value = toLocalInput(row.start_time);
   document.getElementById("endTime").value = toLocalInput(row.end_time);
   document.getElementById("location").value = row.location || "";
+  document.getElementById("repeatWeekly").checked = !!row.is_recurring;
   const saveBtn = document.getElementById("btnSaveClass");
   if (saveBtn) saveBtn.textContent = "Update class";
   if (cancelEditBtn) cancelEditBtn.classList.remove("hidden");
@@ -174,6 +181,8 @@ function startEdit(row) {
 function resetEditForm() {
   editingClassId = null;
   classForm.reset();
+  const repeat = document.getElementById("repeatWeekly");
+  if (repeat) repeat.checked = false;
   const saveBtn = document.getElementById("btnSaveClass");
   if (saveBtn) saveBtn.textContent = "Save class";
   if (cancelEditBtn) cancelEditBtn.classList.add("hidden");
@@ -295,6 +304,7 @@ let map;
 let routeLayers = [];
 let startMarker;
 let endMarker;
+let transferMarkers = [];
 let routeMode = "toCampus";
 let userHomeLocation = "";
 let lastFromValue = "";
@@ -314,9 +324,16 @@ function clearRouteLayers() {
   routeLayers = [];
 }
 
+function clearTransferMarkers() {
+  if (!map) return;
+  transferMarkers.forEach((m) => m.remove());
+  transferMarkers = [];
+}
+
 function setRouteSegments(legs) {
   if (!map) return;
   clearRouteLayers();
+  clearTransferMarkers();
   const bounds = [];
   legs.forEach((leg) => {
     const coords = legCoords(leg);
@@ -431,6 +448,31 @@ function productColor(product) {
     walk: "#64748b",
   };
   return colors[product] || "#10b981";
+}
+
+function addTransferMarkers(legs) {
+  if (!map) return;
+  for (let i = 0; i < legs.length - 1; i++) {
+    const curr = legs[i];
+    const next = legs[i + 1];
+    const currProduct = legProduct(curr);
+    const nextProduct = legProduct(next);
+    if (currProduct === nextProduct) continue;
+    const loc = curr.destination && curr.destination.location;
+    if (!loc) continue;
+    const lat = loc.latitude || loc.lat;
+    const lon = loc.longitude || loc.lon;
+    if (lat == null || lon == null) continue;
+    const color = productColor(nextProduct);
+    const marker = L.circleMarker([lat, lon], {
+      radius: 6,
+      color,
+      fillColor: color,
+      fillOpacity: 0.9,
+      weight: 2,
+    }).addTo(map);
+    transferMarkers.push(marker);
+  }
 }
 
 function legCoords(leg) {
@@ -561,6 +603,7 @@ async function loadRoute() {
       return;
     }
     setRouteSegments(journey.legs);
+    addTransferMarkers(journey.legs);
     const firstLeg = journey.legs[0];
     const lastLeg = journey.legs[journey.legs.length - 1];
     const startLoc = firstLeg && firstLeg.origin && firstLeg.origin.location;

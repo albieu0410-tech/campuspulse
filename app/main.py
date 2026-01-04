@@ -101,7 +101,8 @@ def init_db():
                     course_name TEXT NOT NULL,
                     start_time TIMESTAMP NOT NULL,
                     end_time TIMESTAMP NOT NULL,
-                    location TEXT NOT NULL
+                    location TEXT NOT NULL,
+                    is_recurring BOOLEAN NOT NULL DEFAULT FALSE
                 );
                 """
             )
@@ -115,6 +116,12 @@ def init_db():
                 """
                 ALTER TABLE classes
                 ADD COLUMN IF NOT EXISTS end_time TIMESTAMP;
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE classes
+                ADD COLUMN IF NOT EXISTS is_recurring BOOLEAN NOT NULL DEFAULT FALSE;
                 """
             )
             cur.execute(
@@ -218,6 +225,7 @@ class ClassIn(BaseModel):
     start_time: datetime
     end_time: datetime
     location: str
+    is_recurring: bool = False
 
 
 class AuthIn(BaseModel):
@@ -364,7 +372,7 @@ def list_classes(request: Request):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, course_name, start_time, end_time, location
+                SELECT id, course_name, start_time, end_time, location, is_recurring
                 FROM classes
                 WHERE user_id = %s
                 ORDER BY start_time DESC
@@ -506,13 +514,20 @@ def notify_daily_test(request: Request):
     with get_conn() as conn:
         prefs = preferences_for_user(conn, user["id"])
         classes = classes_for_day(conn, user["id"], today)
+        last_end = last_class_end(conn, user["id"], today)
     home = (prefs or {}).get("home_location")
     journey = None
     if home:
         origin = resolve_location(home)
         destination = resolve_location("Campus Jungfernsee")
         journey = build_journey(origin, destination, prefs or {})
-    html = build_journey_email(user["email"], classes, journey, "Route to Campus Jungfernsee")
+    sections = [("Route to Campus Jungfernsee", journey)]
+    if home and last_end:
+        origin = resolve_location("Campus Jungfernsee")
+        destination = resolve_location(home)
+        back = build_journey(origin, destination, prefs or {}, departure_dt=last_end)
+        sections.append(("Route home", back))
+    html = build_journey_email(user["email"], classes, sections)
     send_brevo_email(user["email"], "CampusPulse daily reminder (test)", html)
     return {"ok": True}
 
@@ -603,14 +618,35 @@ def classes_for_day(conn, user_id: int, day: date) -> list[dict]:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT course_name, start_time, end_time, location
+            SELECT course_name, start_time, end_time, location, is_recurring
             FROM classes
-            WHERE user_id = %s AND start_time >= %s AND start_time <= %s
+            WHERE user_id = %s
             ORDER BY start_time ASC;
             """,
-            (user_id, start, end),
+            (user_id,),
         )
-        return cur.fetchall()
+        rows = cur.fetchall()
+    items = []
+    for row in rows:
+        if row["is_recurring"]:
+            if row["start_time"].weekday() != day.weekday():
+                continue
+            st = datetime.combine(day, row["start_time"].time())
+            et = datetime.combine(day, row["end_time"].time())
+            items.append(
+                {
+                    "course_name": row["course_name"],
+                    "start_time": st,
+                    "end_time": et,
+                    "location": row["location"],
+                }
+            )
+        else:
+            if not (start <= row["start_time"] <= end):
+                continue
+            items.append(row)
+    items.sort(key=lambda r: r["start_time"])
+    return items
 
 
 def build_arrival_datetime(arrival_time_str: Optional[str], timing_pref: str) -> Optional[datetime]:
@@ -626,11 +662,31 @@ def build_arrival_datetime(arrival_time_str: Optional[str], timing_pref: str) ->
     return target + timedelta(minutes=offset)
 
 
+def build_journey_table(title: str, journey: Optional[dict]) -> str:
+    if not journey:
+        return ""
+    legs = journey.get("legs") or []
+    leg_rows = ""
+    for leg in legs:
+        dep = (leg.get("departure") or "")[11:16]
+        arr = (leg.get("arrival") or "")[11:16]
+        mode = leg.get("line", {}).get("name") or leg.get("mode") or "Travel"
+        origin = leg.get("origin", {}).get("name") or "Start"
+        dest = leg.get("destination", {}).get("name") or "End"
+        leg_rows += f"<tr><td>{mode}</td><td>{dep}-{arr}</td><td>{origin} → {dest}</td></tr>"
+    return f"""
+      <h3 style="margin:20px 0 8px;">{title}</h3>
+      <table style="width:100%;border-collapse:collapse;">
+        <tr><th align="left">Line</th><th align="left">Time</th><th align="left">Segment</th></tr>
+        {leg_rows}
+      </table>
+    """
+
+
 def build_journey_email(
     user_email: str,
     classes: list[dict],
-    journey: Optional[dict],
-    route_title: str,
+    sections: list[tuple[str, Optional[dict]]],
 ) -> str:
     class_rows = ""
     for c in classes:
@@ -641,24 +697,7 @@ def build_journey_email(
     if not class_rows:
         class_rows = "<tr><td colspan='3'>No classes today.</td></tr>"
 
-    journey_html = ""
-    if journey:
-        legs = journey.get("legs") or []
-        leg_rows = ""
-        for leg in legs:
-            dep = (leg.get("departure") or "")[11:16]
-            arr = (leg.get("arrival") or "")[11:16]
-            mode = leg.get("line", {}).get("name") or leg.get("mode") or "Travel"
-            origin = leg.get("origin", {}).get("name") or "Start"
-            dest = leg.get("destination", {}).get("name") or "End"
-            leg_rows += f"<tr><td>{mode}</td><td>{dep}-{arr}</td><td>{origin} → {dest}</td></tr>"
-        journey_html = f"""
-          <h3 style="margin:20px 0 8px;">{route_title}</h3>
-          <table style="width:100%;border-collapse:collapse;">
-            <tr><th align="left">Line</th><th align="left">Time</th><th align="left">Segment</th></tr>
-            {leg_rows}
-          </table>
-        """
+    journey_html = "".join(build_journey_table(title, journey) for title, journey in sections)
 
     return f"""
     <div style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.4;">
@@ -689,7 +728,12 @@ def send_brevo_email(to_email: str, subject: str, html: str):
     resp.raise_for_status()
 
 
-def build_journey(origin: dict, destination: dict, prefs: dict) -> Optional[dict]:
+def build_journey(
+    origin: dict,
+    destination: dict,
+    prefs: dict,
+    departure_dt: Optional[datetime] = None,
+) -> Optional[dict]:
     params = {"results": "3", "polylines": "false"}
     if origin.get("id") and destination.get("id"):
         params["from"] = origin["id"]
@@ -708,9 +752,12 @@ def build_journey(origin: dict, destination: dict, prefs: dict) -> Optional[dict
     params["products[regional]"] = str(prefs.get("allow_regional", True)).lower()
     params["products[tram]"] = str(prefs.get("allow_tram", True)).lower()
     params["products[bus]"] = str(prefs.get("allow_bus", True)).lower()
-    arrival = build_arrival_datetime(prefs.get("arrival_time"), prefs.get("timing_pref", "earlier"))
-    if arrival:
-        params["arrival"] = arrival.isoformat()
+    if departure_dt:
+        params["departure"] = departure_dt.isoformat()
+    else:
+        arrival = build_arrival_datetime(prefs.get("arrival_time"), prefs.get("timing_pref", "earlier"))
+        if arrival:
+            params["arrival"] = arrival.isoformat()
     data = bvg_get("/journeys", list(params.items()))
     journeys = data.get("journeys") or []
     if not journeys:
@@ -745,7 +792,15 @@ def send_daily_emails():
                 origin = resolve_location(home)
                 destination = resolve_location("Campus Jungfernsee")
                 journey = build_journey(origin, destination, prefs or {})
-            html = build_journey_email(email, classes, journey, "Route to Campus Jungfernsee")
+            sections = [("Route to Campus Jungfernsee", journey)]
+            if home:
+                last_end = last_class_end(conn, user_id, today)
+                if last_end:
+                    origin = resolve_location("Campus Jungfernsee")
+                    destination = resolve_location(home)
+                    back = build_journey(origin, destination, prefs or {}, departure_dt=last_end)
+                    sections.append(("Route home", back))
+            html = build_journey_email(email, classes, sections)
             try:
                 send_brevo_email(email, "CampusPulse daily reminder", html)
             except Exception:
@@ -759,19 +814,10 @@ def send_daily_emails():
 
 
 def last_class_end(conn, user_id: int, day: date) -> Optional[datetime]:
-    start = datetime.combine(day, time.min)
-    end = datetime.combine(day, time.max)
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT MAX(end_time) AS last_end
-            FROM classes
-            WHERE user_id = %s AND end_time >= %s AND end_time <= %s;
-            """,
-            (user_id, start, end),
-        )
-        row = cur.fetchone()
-    return row["last_end"] if row else None
+    classes = classes_for_day(conn, user_id, day)
+    if not classes:
+        return None
+    return max(c["end_time"] for c in classes if c.get("end_time"))
 
 
 def send_return_reminders():
@@ -804,9 +850,10 @@ def send_return_reminders():
             if home:
                 origin = resolve_location("Campus Jungfernsee")
                 destination = resolve_location(home)
-                journey = build_journey(origin, destination, prefs or {})
+                journey = build_journey(origin, destination, prefs or {}, departure_dt=last_end)
             classes = classes_for_day(conn, user_id, today)
-            html = build_journey_email(email, classes, journey, "Route home")
+            sections = [("Route home", journey)]
+            html = build_journey_email(email, classes, sections)
             try:
                 send_brevo_email(email, "CampusPulse reminder: time to head home", html)
             except Exception:
@@ -826,9 +873,9 @@ def create_class(payload: ClassIn, request: Request):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO classes (user_id, course_name, start_time, end_time, location)
-                VALUES (%s, %s, %s, %s, %s)
-                RETURNING id, course_name, start_time, end_time, location;
+                INSERT INTO classes (user_id, course_name, start_time, end_time, location, is_recurring)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id, course_name, start_time, end_time, location, is_recurring;
                 """,
                 (
                     user["id"],
@@ -836,6 +883,7 @@ def create_class(payload: ClassIn, request: Request):
                     payload.start_time,
                     payload.end_time,
                     payload.location,
+                    payload.is_recurring,
                 ),
             )
             row = cur.fetchone()
@@ -851,15 +899,16 @@ def update_class(class_id: int, payload: ClassIn, request: Request):
             cur.execute(
                 """
                 UPDATE classes
-                SET course_name = %s, start_time = %s, end_time = %s, location = %s
+                SET course_name = %s, start_time = %s, end_time = %s, location = %s, is_recurring = %s
                 WHERE id = %s AND user_id = %s
-                RETURNING id, course_name, start_time, end_time, location;
+                RETURNING id, course_name, start_time, end_time, location, is_recurring;
                 """,
                 (
                     payload.course_name,
                     payload.start_time,
                     payload.end_time,
                     payload.location,
+                    payload.is_recurring,
                     class_id,
                     user["id"],
                 ),
