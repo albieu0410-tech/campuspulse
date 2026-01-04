@@ -44,16 +44,47 @@ const signupForm = document.getElementById("signupForm");
 if (signupForm) {
   signupForm.addEventListener("submit", async (ev) => {
     ev.preventDefault();
+    const first_name = document.getElementById("signupFirstName").value.trim();
+    const last_name = document.getElementById("signupLastName").value.trim();
     const email = document.getElementById("signupEmail").value.trim();
     const password = document.getElementById("signupPassword").value;
     const home_location = (document.getElementById("signupHome") || {}).value || "";
+    const gdpr_confirm = document.getElementById("signupGdpr").checked;
     const err = document.getElementById("signupError");
     err.textContent = "";
     try {
-      await postAuth("/api/auth/signup", { email, password, home_location });
+      await postAuth("/api/auth/signup", {
+        first_name,
+        last_name,
+        email,
+        password,
+        home_location,
+        gdpr_confirm,
+      });
       window.location.href = "/";
     } catch (e) {
       err.textContent = e.message;
+    }
+  });
+}
+
+const gdprLink = document.getElementById("gdprLink");
+const gdprModal = document.getElementById("gdprModal");
+const gdprClose = document.getElementById("gdprClose");
+if (gdprLink && gdprModal && gdprClose) {
+  gdprLink.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    gdprModal.classList.remove("hidden");
+    gdprModal.classList.add("flex");
+  });
+  gdprClose.addEventListener("click", () => {
+    gdprModal.classList.add("hidden");
+    gdprModal.classList.remove("flex");
+  });
+  gdprModal.addEventListener("click", (ev) => {
+    if (ev.target === gdprModal) {
+      gdprModal.classList.add("hidden");
+      gdprModal.classList.remove("flex");
     }
   });
 }

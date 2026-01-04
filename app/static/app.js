@@ -8,6 +8,7 @@ async function api(path, opts) {
 }
 
 function fmt(dtString) {
+  if (!dtString) return "";
   try {
     const d = new Date(dtString);
     return d.toLocaleString();
@@ -30,12 +31,17 @@ async function loadClasses() {
       <tr class="border-b last:border-b-0">
         <td class="py-2 pr-2 font-medium">${escapeHtml(c.course_name)}</td>
         <td class="py-2 pr-2 text-slate-700">${fmt(c.start_time)}</td>
-        <td class="py-2 pr-2 text-slate-700">${fmt(c.end_time)}</td>
+        <td class="py-2 pr-2 text-slate-700">${c.end_time ? fmt(c.end_time) : "-"}</td>
         <td class="py-2 pr-2 text-slate-700">${escapeHtml(c.location)}</td>
         <td class="py-2 text-right">
-          <button data-class-id="${c.id}" class="btnDeleteClass px-2 py-1 rounded-lg border text-xs hover:bg-slate-50">
-            Delete
-          </button>
+          <div class="inline-flex items-center gap-2">
+            <button data-class-id="${c.id}" class="btnEditClass px-2 py-1 rounded-lg border text-xs hover:bg-slate-50">
+              Edit
+            </button>
+            <button data-class-id="${c.id}" class="btnDeleteClass px-2 py-1 rounded-lg border text-xs hover:bg-slate-50">
+              Delete
+            </button>
+          </div>
         </td>
       </tr>
     `).join("");
@@ -52,8 +58,16 @@ async function loadClasses() {
         }
       });
     });
+    document.querySelectorAll(".btnEditClass").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-class-id");
+        const row = items.find((x) => String(x.id) === String(id));
+        if (!row) return;
+        startEdit(row);
+      });
+    });
   } catch (e) {
-    tbody.innerHTML = `<tr><td class="py-2 text-red-600" colspan="3">${escapeHtml(e.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td class="py-2 text-red-600" colspan="5">${escapeHtml(e.message)}</td></tr>`;
   }
 }
 
@@ -110,7 +124,9 @@ if (notifyDailyBtn) {
 
 document.getElementById("btnRefresh").addEventListener("click", loadClasses);
 
-document.getElementById("classForm").addEventListener("submit", async (ev) => {
+let editingClassId = null;
+const classForm = document.getElementById("classForm");
+classForm.addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const course_name = document.getElementById("courseName").value.trim();
   const start_time_local = document.getElementById("startTime").value;
@@ -123,23 +139,60 @@ document.getElementById("classForm").addEventListener("submit", async (ev) => {
   const end_time = end_time_local.length === 16 ? end_time_local + ":00" : end_time_local;
 
   try {
-    await api("/api/classes", {
-      method: "POST",
+    const method = editingClassId ? "PUT" : "POST";
+    const path = editingClassId ? `/api/classes/${editingClassId}` : "/api/classes";
+    await api(path, {
+      method,
       headers: {"Content-Type":"application/json"},
       body: JSON.stringify({ course_name, start_time, end_time, location })
     });
-    ev.target.reset();
+    resetEditForm();
     await loadClasses();
   } catch (e) {
     alert(e.message);
   }
 });
 
+const cancelEditBtn = document.getElementById("btnCancelEdit");
+if (cancelEditBtn) {
+  cancelEditBtn.addEventListener("click", () => {
+    resetEditForm();
+  });
+}
+
+function startEdit(row) {
+  editingClassId = row.id;
+  document.getElementById("courseName").value = row.course_name || "";
+  document.getElementById("startTime").value = toLocalInput(row.start_time);
+  document.getElementById("endTime").value = toLocalInput(row.end_time);
+  document.getElementById("location").value = row.location || "";
+  const saveBtn = document.getElementById("btnSaveClass");
+  if (saveBtn) saveBtn.textContent = "Update class";
+  if (cancelEditBtn) cancelEditBtn.classList.remove("hidden");
+}
+
+function resetEditForm() {
+  editingClassId = null;
+  classForm.reset();
+  const saveBtn = document.getElementById("btnSaveClass");
+  if (saveBtn) saveBtn.textContent = "Save class";
+  if (cancelEditBtn) cancelEditBtn.classList.add("hidden");
+}
+
+function toLocalInput(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 async function loadMe() {
   try {
     const me = await api("/api/auth/me");
-    const email = document.getElementById("userEmail");
-    if (email) email.textContent = me.email;
+    const name = [me.first_name, me.last_name].filter(Boolean).join(" ");
+    const link = document.getElementById("userProfileLink");
+    if (link) link.textContent = name || me.email;
   } catch {
     const loginLink = document.getElementById("loginLink");
     const logoutBtn = document.getElementById("btnLogout");
@@ -163,6 +216,7 @@ async function loadPreferences() {
     if (from && !from.value && prefs.home_location) {
       from.value = prefs.home_location;
     }
+    updateArrivalTimeState();
     updateRouteModeUI();
   } catch {}
 }
@@ -184,6 +238,18 @@ async function savePreferences() {
       body: JSON.stringify(payload),
     });
   } catch {}
+}
+
+function updateArrivalTimeState() {
+  const pref = document.getElementById("arrivalPref");
+  const timeInput = document.getElementById("arrivalTime");
+  if (!pref || !timeInput) return;
+  if (pref.value === "now") {
+    timeInput.value = "";
+    timeInput.disabled = true;
+  } else {
+    timeInput.disabled = false;
+  }
 }
 
 const logoutBtn = document.getElementById("btnLogout");
@@ -231,6 +297,7 @@ let startMarker;
 let endMarker;
 let routeMode = "toCampus";
 let userHomeLocation = "";
+let lastFromValue = "";
 function initMap() {
   const el = document.getElementById("map");
   if (!el || !window.L) return;
@@ -268,15 +335,17 @@ function setMarkers(start, end) {
   if (!map) return;
   if (startMarker) startMarker.remove();
   if (endMarker) endMarker.remove();
+  const startLabel = routeMode === "return" ? "Campus" : "Start";
+  const endLabel = routeMode === "return" ? "Home" : "Campus";
   const startIcon = L.divIcon({
     className: "start-marker",
-    html: '<div style="background:#0f172a;color:#fff;font-size:11px;padding:4px 6px;border-radius:10px;">Start</div>',
+    html: `<div style="background:#0f172a;color:#fff;font-size:11px;padding:4px 6px;border-radius:10px;">${startLabel}</div>`,
     iconSize: [50, 20],
     iconAnchor: [12, 10],
   });
   const endIcon = L.divIcon({
     className: "end-marker",
-    html: '<div style="background:#10b981;color:#fff;font-size:11px;padding:4px 6px;border-radius:10px;">Campus</div>',
+    html: `<div style="background:#10b981;color:#fff;font-size:11px;padding:4px 6px;border-radius:10px;">${endLabel}</div>`,
     iconSize: [60, 20],
     iconAnchor: [12, 10],
   });
@@ -342,12 +411,12 @@ function legProduct(leg) {
 
 function productMeta(product) {
   const map = {
-    subway: { label: "U-Bahn", logo: "/static/img/ubahn.svg" },
-    suburban: { label: "S-Bahn", logo: "/static/img/sbahn.svg" },
-    regional: { label: "Regional", logo: "/static/img/regional.svg" },
-    tram: { label: "Tram", logo: "/static/img/tram.svg" },
-    bus: { label: "Bus", logo: "/static/img/bus.svg" },
-    walk: { label: "Walk", logo: "/static/img/walk.svg" },
+    subway: { label: "U-Bahn", logo: "/static/img/U-Bahn.svg.png" },
+    suburban: { label: "S-Bahn", logo: "/static/img/S-Bahn-Logo.svg.png" },
+    regional: { label: "Regional", logo: "/static/img/DB Logo.png" },
+    tram: { label: "Tram", logo: "/static/img/Tram-Logo.svg" },
+    bus: { label: "Bus", logo: "/static/img/BUS-Logo-BVG.svg.png" },
+    walk: { label: "Walk", logo: "/static/img/Walk Logo.webp" },
   };
   return map[product] || { label: product || "Travel", logo: "" };
 }
@@ -463,7 +532,7 @@ async function loadRoute() {
 
     const pref = document.getElementById("arrivalPref").value;
     const time = document.getElementById("arrivalTime").value;
-    if (time) {
+    if (pref !== "now" && time) {
       const now = new Date();
       const [hh, mm] = time.split(":").map((v) => parseInt(v, 10));
       const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hh, mm, 0, 0);
@@ -472,7 +541,9 @@ async function loadRoute() {
       params.set("arrival", target.toISOString());
     }
 
-    await savePreferences();
+    if (pref !== "now") {
+      await savePreferences();
+    }
     const data = await api(`/api/bvg/journeys?${params.toString()}`);
     const journey = data.journeys && data.journeys[0];
     if (!journey || !journey.legs) {
@@ -510,20 +581,26 @@ if (routeBtn) {
   routeBtn.addEventListener("click", loadRoute);
 }
 
+const arrivalPref = document.getElementById("arrivalPref");
+if (arrivalPref) {
+  arrivalPref.addEventListener("change", () => {
+    updateArrivalTimeState();
+  });
+}
+
 function updateRouteModeUI() {
   const fromInput = document.getElementById("fromInput");
   const toInput = document.getElementById("toInput");
   if (!fromInput || !toInput) return;
   if (routeMode === "return") {
+    lastFromValue = fromInput.value || lastFromValue;
     fromInput.value = "Campus Jungfernsee";
     fromInput.readOnly = true;
     toInput.value = userHomeLocation || "Home";
     toInput.readOnly = true;
   } else {
     fromInput.readOnly = false;
-    if (!fromInput.value && userHomeLocation) {
-      fromInput.value = userHomeLocation;
-    }
+    fromInput.value = lastFromValue || userHomeLocation || "";
     toInput.value = "Campus Jungfernsee";
     toInput.readOnly = true;
   }

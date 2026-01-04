@@ -28,7 +28,7 @@ DB_PORT = env("DB_PORT", "5432")
 DB_NAME = env("DB_NAME")
 DB_USER = env("DB_USER")
 DB_PASSWORD = env("DB_PASSWORD")
-GEOCODE_CONTACT = os.getenv("GEOCODE_CONTACT", "you@example.com")
+GEOCODE_CONTACT = os.getenv("GEOCODE_CONTACT", "sebastian@example.com")
 BREVO_API_KEY = os.getenv("BREVO_API_KEY")
 BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL")
 BREVO_SENDER_NAME = os.getenv("BREVO_SENDER_NAME", "CampusPulse")
@@ -51,6 +51,7 @@ TZ = ZoneInfo("Europe/Berlin")
 INDEX_PATH = os.path.join("app", "templates", "index.html")
 LOGIN_PATH = os.path.join("app", "templates", "login.html")
 SIGNUP_PATH = os.path.join("app", "templates", "signup.html")
+PROFILE_PATH = os.path.join("app", "templates", "profile.html")
 
 
 def get_conn():
@@ -67,8 +68,29 @@ def init_db():
                     id SERIAL PRIMARY KEY,
                     email TEXT NOT NULL UNIQUE,
                     password_hash TEXT NOT NULL,
+                    gdpr_confirm BOOLEAN NOT NULL DEFAULT FALSE,
+                    first_name TEXT,
+                    last_name TEXT,
                     created_at TIMESTAMP NOT NULL DEFAULT NOW()
                 );
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS gdpr_confirm BOOLEAN NOT NULL DEFAULT FALSE;
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS first_name TEXT;
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS last_name TEXT;
                 """
             )
             cur.execute(
@@ -207,6 +229,9 @@ class SignupIn(BaseModel):
     email: str
     password: str
     home_location: Optional[str] = None
+    gdpr_confirm: bool = False
+    first_name: str
+    last_name: str
 
 
 class PreferencesIn(BaseModel):
@@ -218,6 +243,12 @@ class PreferencesIn(BaseModel):
     timing_pref: Optional[str] = None
     arrival_time: Optional[str] = None
     home_location: Optional[str] = None
+
+
+class PasswordChangeIn(BaseModel):
+    old_password: str
+    new_password: str
+    confirm_password: str
 
 
 def hash_password(password: str) -> str:
@@ -305,6 +336,14 @@ def signup_page(request: Request):
     if get_current_user(request):
         return RedirectResponse("/")
     with open(SIGNUP_PATH, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+@app.get("/profile", response_class=HTMLResponse)
+def profile_page(request: Request):
+    if not get_current_user(request):
+        return RedirectResponse("/login")
+    with open(PROFILE_PATH, "r", encoding="utf-8") as f:
         return f.read()
 
 
@@ -804,12 +843,52 @@ def create_class(payload: ClassIn, request: Request):
     return row
 
 
+@app.put("/api/classes/{class_id}")
+def update_class(class_id: int, payload: ClassIn, request: Request):
+    user = require_user(request)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE classes
+                SET course_name = %s, start_time = %s, end_time = %s, location = %s
+                WHERE id = %s AND user_id = %s
+                RETURNING id, course_name, start_time, end_time, location;
+                """,
+                (
+                    payload.course_name,
+                    payload.start_time,
+                    payload.end_time,
+                    payload.location,
+                    class_id,
+                    user["id"],
+                ),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    if not row:
+        raise HTTPException(status_code=404, detail="Class not found")
+    return row
+
+
 @app.get("/api/auth/me")
 def auth_me(request: Request):
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    return {"id": user["id"], "email": user["email"]}
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT first_name, last_name FROM users WHERE id = %s;",
+                (user["id"],),
+            )
+            row = cur.fetchone()
+    return {
+        "id": user["id"],
+        "email": user["email"],
+        "first_name": (row or {}).get("first_name") if row else None,
+        "last_name": (row or {}).get("last_name") if row else None,
+    }
 
 
 @app.post("/api/auth/signup")
@@ -817,6 +896,10 @@ def auth_signup(payload: SignupIn):
     email = payload.email.strip().lower()
     if not email.endswith("@ue-germany.de"):
         raise HTTPException(status_code=400, detail="Email must end with @ue-germany.de")
+    if not payload.gdpr_confirm:
+        raise HTTPException(status_code=400, detail="GDPR consent is required")
+    if not payload.first_name.strip() or not payload.last_name.strip():
+        raise HTTPException(status_code=400, detail="First and last name are required")
     if len(payload.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
     with get_conn() as conn:
@@ -828,11 +911,17 @@ def auth_signup(payload: SignupIn):
             password_hash = hash_password(payload.password)
             cur.execute(
                 """
-                INSERT INTO users (email, password_hash)
-                VALUES (%s, %s)
+                INSERT INTO users (email, password_hash, gdpr_confirm, first_name, last_name)
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING id, email;
                 """,
-                (email, password_hash),
+                (
+                    email,
+                    password_hash,
+                    payload.gdpr_confirm,
+                    payload.first_name.strip(),
+                    payload.last_name.strip(),
+                ),
             )
             user = cur.fetchone()
             if payload.home_location:
@@ -893,6 +982,31 @@ def auth_logout(request: Request):
     response = HTMLResponse(content="", status_code=204)
     response.delete_cookie("session")
     return response
+
+
+@app.post("/api/auth/change-password")
+def auth_change_password(payload: PasswordChangeIn, request: Request):
+    user = require_user(request)
+    if payload.new_password != payload.confirm_password:
+        raise HTTPException(status_code=400, detail="New passwords do not match")
+    if len(payload.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT password_hash FROM users WHERE id = %s;",
+                (user["id"],),
+            )
+            row = cur.fetchone()
+            if not row or not verify_password(payload.old_password, row["password_hash"]):
+                raise HTTPException(status_code=401, detail="Old password is incorrect")
+            new_hash = hash_password(payload.new_password)
+            cur.execute(
+                "UPDATE users SET password_hash = %s WHERE id = %s;",
+                (new_hash, user["id"]),
+            )
+        conn.commit()
+    return {"ok": True}
 
 
 @app.get("/api/preferences")

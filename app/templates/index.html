@@ -37,7 +37,13 @@
             </div>
           </div>
           <div class="flex items-center gap-3">
-            <span id="userEmail" class="text-sm text-slate-600"></span>
+            <a id="userProfileLink" href="/profile" class="text-sm text-slate-700 hover:underline"></a>
+            <a href="/profile" class="text-slate-500 hover:text-slate-800" aria-label="Profile settings">
+              <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="1.6">
+                <path d="M12 3l1.6 2.9 3.3.5-2.4 2.3.6 3.3L12 10.8 9 12.3l.6-3.3L7.2 6.4l3.3-.5L12 3z"/>
+                <circle cx="12" cy="12" r="3.2" />
+              </svg>
+            </a>
             <a id="loginLink" href="/login"
               class="hidden px-3 py-2 rounded-xl border hover:bg-slate-50">
               Login
@@ -97,23 +103,23 @@
                 placeholder="Room B-204" />
             </div>
 
-            <button class="w-full px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-500">
-              Save class
-            </button>
+            <div class="flex items-center gap-2">
+              <button id="btnSaveClass"
+                class="flex-1 px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-500">
+                Save class
+              </button>
+              <button id="btnCancelEdit"
+                type="button"
+                class="hidden px-4 py-2 rounded-xl border hover:bg-slate-50">
+                Cancel
+              </button>
+            </div>
           </form>
 
           <div class="mt-4 text-sm text-slate-600">
-            <div class="font-medium">Commute suggestions (placeholder)</div>
-            <ul class="list-disc ml-5 mt-1">
-              <li>Leave 15 minutes earlier if it’s raining.</li>
-              <li>Prefer U-Bahn for fewer delays (demo text).</li>
-            </ul>
-          </div>
-
-          <div class="mt-4 text-sm text-slate-600">
-            <div class="font-medium">Reminder concept (UI only)</div>
-            <div class="mt-1 rounded-xl border bg-slate-50 p-3">
-              “Reminder: next class starts in 30 minutes” (placeholder)
+            <div class="font-medium">Daily reminders</div>
+            <div class="mt-1">
+              We email your schedule in the morning and remind you 30 minutes before your last class ends.
             </div>
           </div>
         </section>
@@ -146,7 +152,7 @@
 
       <section class="mt-6 bg-white rounded-2xl shadow-sm border p-6">
         <h2 class="text-xl font-semibold">Route planner (BVG)</h2>
-        <div class="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div class="mt-4 grid grid-cols-1 md:grid-cols-6 gap-3">
           <div class="md:col-span-2">
             <label class="block text-sm font-medium">Start</label>
             <input id="fromInput"
@@ -160,33 +166,26 @@
               value="Campus Jungfernsee"
               readonly />
           </div>
-          <div class="flex items-end gap-2">
+          <div class="md:col-span-3 flex items-end gap-2">
             <button id="btnUseLocation"
-              class="px-3 py-2 h-10 w-32 rounded-xl border hover:bg-slate-50 flex items-center justify-center gap-2 text-sm">
+              class="px-3 py-2 h-10 flex-1 rounded-xl border hover:bg-slate-50 flex items-center justify-center gap-2 text-sm">
               <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4">
                 <path d="M12 2l2.2 5.3 5.3 2.2-5.3 2.2L12 17l-2.2-5.3-5.3-2.2 5.3-2.2L12 2z" fill="currentColor"/>
               </svg>
               Use location
             </button>
             <button id="btnSwapRoute"
-              class="px-3 py-2 h-10 w-24 rounded-xl border hover:bg-slate-50 text-sm">
+              class="px-3 py-2 h-10 flex-1 rounded-xl border hover:bg-slate-50 text-sm">
               Switch
             </button>
             <button id="btnRoute"
-              class="px-4 py-2 h-10 w-32 rounded-xl bg-emerald-600 text-white hover:bg-emerald-500 text-sm">
+              class="px-4 py-2 h-10 flex-1 rounded-xl bg-emerald-600 text-white hover:bg-emerald-500 text-sm whitespace-nowrap">
               Find route
             </button>
           </div>
         </div>
-        <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <div class="text-sm font-medium text-slate-700">CampusPulse</div>
-            <div class="mt-2 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs uppercase tracking-wide">
-              <span class="inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
-              Campus Route
-            </div>
-          </div>
-          <div class="md:col-span-2">
             <div class="text-sm font-medium text-slate-700">Transport preferences</div>
             <div class="mt-2 grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
               <label class="flex items-center gap-2">
@@ -220,6 +219,7 @@
             <div class="text-sm font-medium text-slate-700">Arrival preference</div>
             <div class="mt-2 grid grid-cols-2 gap-2">
               <select id="arrivalPref" class="rounded-xl border p-2 text-sm">
+                <option value="now">Now</option>
                 <option value="earlier">Arrive earlier</option>
                 <option value="later">Arrive later</option>
               </select>
