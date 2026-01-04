@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>CampusPulse | Sign up</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-slate-50 text-slate-900">
+    <main class="min-h-screen flex items-center justify-center p-6">
+      <div class="w-full max-w-md bg-white rounded-2xl shadow-sm border p-6">
+        <div class="flex items-start justify-between">
+          <div>
+            <h1 class="text-2xl font-semibold">Create account</h1>
+            <p class="mt-1 text-sm text-slate-600">Only @ue-germany.de emails are allowed.</p>
+          </div>
+          <a href="/login"
+            class="px-3 py-2 rounded-xl border text-sm hover:bg-slate-50">
+            Login
+          </a>
+        </div>
+
+        <form id="signupForm" class="mt-6 space-y-3">
+          <div>
+            <label class="block text-sm font-medium">Email</label>
+            <input id="signupEmail" type="email" required
+              class="mt-1 w-full rounded-xl border p-2"
+              placeholder="name@ue-germany.de" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium">Home address</label>
+            <input id="signupHome" type="text"
+              class="mt-1 w-full rounded-xl border p-2"
+              placeholder="Your home address or nearest stop" />
+            <button id="btnSignupLocation" type="button"
+              class="mt-2 px-3 py-2 rounded-xl border text-sm hover:bg-slate-50">
+              Use my location
+            </button>
+          </div>
+          <div>
+            <label class="block text-sm font-medium">Password</label>
+            <input id="signupPassword" type="password" required
+              class="mt-1 w-full rounded-xl border p-2"
+              placeholder="At least 8 characters" />
+          </div>
+          <button class="w-full px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-500">
+            Sign up
+          </button>
+          <div id="signupError" class="text-sm text-red-600"></div>
+        </form>
+      </div>
+    </main>
+    <script src="/static/auth.js"></script>
+  </body>
+</html>

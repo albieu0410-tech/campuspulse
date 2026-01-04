@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>CampusPulse</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <style>
+      #routeSteps {
+        scrollbar-width: none;
+      }
+      #routeSteps::-webkit-scrollbar {
+        display: none;
+      }
+    </style>
+  </head>
+
+  <body class="bg-slate-50 text-slate-900">
+    <main class="max-w-5xl mx-auto p-6">
+      <div class="bg-white rounded-2xl shadow-sm border p-6">
+        <div class="flex items-start justify-between gap-4">
+          <div class="flex items-center gap-3">
+            <div class="h-10 w-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold">
+              CP
+            </div>
+            <div>
+              <h1 class="text-3xl font-semibold">CampusPulse</h1>
+              <p class="mt-2 text-slate-600">
+                Minimal schedule & commute assistant (infrastructure-first). Local-first with Docker + Postgres.
+              </p>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <span id="userEmail" class="text-sm text-slate-600"></span>
+            <a id="loginLink" href="/login"
+              class="hidden px-3 py-2 rounded-xl border hover:bg-slate-50">
+              Login
+            </a>
+            <button id="btnLogout"
+              class="px-3 py-2 rounded-xl border hover:bg-slate-50">
+              Logout
+            </button>
+          </div>
+        </div>
+
+        <div class="mt-6 flex flex-col md:flex-row gap-3 md:items-center">
+          <button id="btnDbTest"
+            class="px-4 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800">
+            Run /api/db-test
+          </button>
+          <button id="btnNotifyTest"
+            class="px-4 py-2 rounded-xl border hover:bg-slate-50">
+            Send test email
+          </button>
+          <button id="btnNotifyDailyTest"
+            class="px-4 py-2 rounded-xl border hover:bg-slate-50">
+            Send daily reminder
+          </button>
+          <pre id="dbOut" class="flex-1 bg-slate-100 rounded-xl p-3 text-sm overflow-auto"></pre>
+        </div>
+        <div id="notifyOut" class="mt-2 text-sm text-slate-600"></div>
+      </div>
+
+      <div class="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+        <section class="bg-white rounded-2xl shadow-sm border p-6">
+          <h2 class="text-xl font-semibold">Add a class</h2>
+          <form id="classForm" class="mt-4 space-y-3">
+            <div>
+              <label class="block text-sm font-medium">Course name</label>
+              <input id="courseName" required
+                class="mt-1 w-full rounded-xl border p-2"
+                placeholder="Data Science 101" />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium">Start time</label>
+              <input id="startTime" type="datetime-local" required
+                class="mt-1 w-full rounded-xl border p-2" />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium">End time</label>
+              <input id="endTime" type="datetime-local" required
+                class="mt-1 w-full rounded-xl border p-2" />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium">Location</label>
+              <input id="location" required
+                class="mt-1 w-full rounded-xl border p-2"
+                placeholder="Room B-204" />
+            </div>
+
+            <button class="w-full px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-500">
+              Save class
+            </button>
+          </form>
+
+          <div class="mt-4 text-sm text-slate-600">
+            <div class="font-medium">Commute suggestions (placeholder)</div>
+            <ul class="list-disc ml-5 mt-1">
+              <li>Leave 15 minutes earlier if it’s raining.</li>
+              <li>Prefer U-Bahn for fewer delays (demo text).</li>
+            </ul>
+          </div>
+
+          <div class="mt-4 text-sm text-slate-600">
+            <div class="font-medium">Reminder concept (UI only)</div>
+            <div class="mt-1 rounded-xl border bg-slate-50 p-3">
+              “Reminder: next class starts in 30 minutes” (placeholder)
+            </div>
+          </div>
+        </section>
+
+        <section class="bg-white rounded-2xl shadow-sm border p-6">
+          <div class="flex items-center justify-between">
+            <h2 class="text-xl font-semibold">Recent classes</h2>
+            <button id="btnRefresh"
+              class="px-3 py-2 rounded-xl border hover:bg-slate-50">
+              Refresh
+            </button>
+          </div>
+
+          <div class="mt-4 overflow-auto">
+            <table class="w-full text-sm">
+              <thead class="text-slate-600">
+                <tr class="border-b">
+                  <th class="text-left py-2 pr-2">Course</th>
+                  <th class="text-left py-2 pr-2">Start</th>
+                  <th class="text-left py-2 pr-2">End</th>
+                  <th class="text-left py-2 pr-2">Location</th>
+                  <th class="text-right py-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="classesTbody"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <section class="mt-6 bg-white rounded-2xl shadow-sm border p-6">
+        <h2 class="text-xl font-semibold">Route planner (BVG)</h2>
+        <div class="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div class="md:col-span-2">
+            <label class="block text-sm font-medium">Start</label>
+            <input id="fromInput"
+              class="mt-1 w-full rounded-xl border p-2"
+              placeholder="Your stop or address" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium">Destination</label>
+            <input id="toInput"
+              class="mt-1 w-full rounded-xl border bg-slate-50 p-2"
+              value="Campus Jungfernsee"
+              readonly />
+          </div>
+          <div class="flex items-end gap-2">
+            <button id="btnUseLocation"
+              class="px-3 py-2 h-10 w-32 rounded-xl border hover:bg-slate-50 flex items-center justify-center gap-2 text-sm">
+              <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4">
+                <path d="M12 2l2.2 5.3 5.3 2.2-5.3 2.2L12 17l-2.2-5.3-5.3-2.2 5.3-2.2L12 2z" fill="currentColor"/>
+              </svg>
+              Use location
+            </button>
+            <button id="btnSwapRoute"
+              class="px-3 py-2 h-10 w-24 rounded-xl border hover:bg-slate-50 text-sm">
+              Switch
+            </button>
+            <button id="btnRoute"
+              class="px-4 py-2 h-10 w-32 rounded-xl bg-emerald-600 text-white hover:bg-emerald-500 text-sm">
+              Find route
+            </button>
+          </div>
+        </div>
+        <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <div class="text-sm font-medium text-slate-700">CampusPulse</div>
+            <div class="mt-2 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs uppercase tracking-wide">
+              <span class="inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
+              Campus Route
+            </div>
+          </div>
+          <div class="md:col-span-2">
+            <div class="text-sm font-medium text-slate-700">Transport preferences</div>
+            <div class="mt-2 grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
+              <label class="flex items-center gap-2">
+                <input id="prefUbahn" type="checkbox" checked />
+                <img src="/static/img/U-Bahn.svg.png" alt="U-Bahn" class="h-4 w-auto" onerror="this.style.display='none'" />
+                U-Bahn
+              </label>
+              <label class="flex items-center gap-2">
+                <input id="prefSbahn" type="checkbox" checked />
+                <img src="/static/img/S-Bahn-Logo.svg.png" alt="S-Bahn" class="h-4 w-auto" onerror="this.style.display='none'" />
+                S-Bahn
+              </label>
+              <label class="flex items-center gap-2">
+                <input id="prefRegional" type="checkbox" checked />
+                <img src="/static/img/DB Logo.png" alt="Regional" class="h-4 w-auto" onerror="this.style.display='none'" />
+                Regional
+              </label>
+              <label class="flex items-center gap-2">
+                <input id="prefTram" type="checkbox" checked />
+                <img src="/static/img/Tram-Logo.svg" alt="Tram" class="h-4 w-auto" onerror="this.style.display='none'" />
+                Tram
+              </label>
+              <label class="flex items-center gap-2">
+                <input id="prefBus" type="checkbox" checked />
+                <img src="/static/img/BUS-Logo-BVG.svg.png" alt="Bus" class="h-4 w-auto" onerror="this.style.display='none'" />
+                Bus
+              </label>
+            </div>
+          </div>
+          <div>
+            <div class="text-sm font-medium text-slate-700">Arrival preference</div>
+            <div class="mt-2 grid grid-cols-2 gap-2">
+              <select id="arrivalPref" class="rounded-xl border p-2 text-sm">
+                <option value="earlier">Arrive earlier</option>
+                <option value="later">Arrive later</option>
+              </select>
+              <input id="arrivalTime" type="time" class="rounded-xl border p-2 text-sm" />
+            </div>
+            <div class="mt-2 text-xs text-slate-500">
+              Time is adjusted by 10 minutes based on the preference.
+            </div>
+          </div>
+        </div>
+        <div class="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div class="lg:col-span-2">
+            <div id="map" class="h-96 rounded-xl border"></div>
+          </div>
+          <div>
+            <div class="text-sm font-medium text-slate-700">Route changes</div>
+            <div id="routeSteps" class="mt-2 space-y-2 max-h-80 overflow-y-auto pr-1"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
