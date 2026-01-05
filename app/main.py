@@ -28,12 +28,16 @@ DB_PORT = env("DB_PORT", "5432")
 DB_NAME = env("DB_NAME")
 DB_USER = env("DB_USER")
 DB_PASSWORD = env("DB_PASSWORD")
+DB_SSLMODE = os.getenv("DB_SSLMODE", "prefer")
 GEOCODE_CONTACT = os.getenv("GEOCODE_CONTACT", "sebastian@example.com")
 BREVO_API_KEY = os.getenv("BREVO_API_KEY")
 BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL")
 BREVO_SENDER_NAME = os.getenv("BREVO_SENDER_NAME", "CampusPulse")
 
-DATABASE_URL = f"host={DB_HOST} port={DB_PORT} dbname={DB_NAME} user={DB_USER} password={DB_PASSWORD}"
+DATABASE_URL = (
+    f"host={DB_HOST} port={DB_PORT} dbname={DB_NAME} "
+    f"user={DB_USER} password={DB_PASSWORD} sslmode={DB_SSLMODE}"
+)
 
 app = FastAPI(title="CampusPulse")
 _scheduler: Optional[BackgroundScheduler] = None
