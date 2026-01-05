@@ -33,6 +33,7 @@ GEOCODE_CONTACT = os.getenv("GEOCODE_CONTACT", "sebastian@example.com")
 BREVO_API_KEY = os.getenv("BREVO_API_KEY")
 BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL")
 BREVO_SENDER_NAME = os.getenv("BREVO_SENDER_NAME", "CampusPulse")
+AUTH_DISABLED = os.getenv("AUTH_DISABLED", "false").lower() == "true"
 
 DATABASE_URL = (
     f"host={DB_HOST} port={DB_PORT} dbname={DB_NAME} "
@@ -364,8 +365,17 @@ def get_current_user(request: Request):
     return row
 
 
+def get_fallback_user():
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, email FROM users ORDER BY id ASC LIMIT 1;")
+            return cur.fetchone()
+
+
 def require_user(request: Request):
     user = get_current_user(request)
+    if AUTH_DISABLED:
+        return user or get_fallback_user()
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
     return user
@@ -981,6 +991,8 @@ def update_class(class_id: int, payload: ClassIn, request: Request):
 @app.get("/api/auth/me")
 def auth_me(request: Request):
     user = get_current_user(request)
+    if AUTH_DISABLED:
+        user = user or get_fallback_user()
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
     with get_conn() as conn:
