@@ -225,6 +225,8 @@ async function loadPreferences() {
     if (from && !from.value && prefs.home_location) {
       from.value = prefs.home_location;
     }
+    const reminder = document.getElementById("reminderTime");
+    if (reminder) reminder.value = prefs.reminder_time || "";
     updateArrivalTimeState();
     updateRouteModeUI();
   } catch {}
@@ -239,6 +241,7 @@ async function savePreferences() {
     allow_bus: document.getElementById("prefBus").checked,
     timing_pref: document.getElementById("arrivalPref").value,
     arrival_time: document.getElementById("arrivalTime").value,
+    reminder_time: (document.getElementById("reminderTime") || {}).value || "",
   };
   try {
     await api("/api/preferences", {
@@ -640,6 +643,13 @@ const arrivalPref = document.getElementById("arrivalPref");
 if (arrivalPref) {
   arrivalPref.addEventListener("change", () => {
     updateArrivalTimeState();
+  });
+}
+
+const reminderInput = document.getElementById("reminderTime");
+if (reminderInput) {
+  reminderInput.addEventListener("change", () => {
+    savePreferences();
   });
 }
 

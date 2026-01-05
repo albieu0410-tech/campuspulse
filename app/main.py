@@ -164,7 +164,8 @@ def init_db():
                     allow_bus BOOLEAN NOT NULL DEFAULT TRUE,
                     timing_pref TEXT NOT NULL DEFAULT 'earlier',
                     arrival_time TEXT,
-                    home_location TEXT
+                    home_location TEXT,
+                    reminder_time TEXT
                 );
                 """
             )
@@ -172,6 +173,12 @@ def init_db():
                 """
                 ALTER TABLE user_preferences
                 ADD COLUMN IF NOT EXISTS home_location TEXT;
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE user_preferences
+                ADD COLUMN IF NOT EXISTS reminder_time TEXT;
                 """
             )
             cur.execute(
@@ -187,14 +194,49 @@ def init_db():
             )
             cur.execute(
                 """
-                CREATE TABLE IF NOT EXISTS reminder_logs (
-                    id SERIAL PRIMARY KEY,
-                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    send_date DATE NOT NULL,
-                    kind TEXT NOT NULL,
-                    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-                    UNIQUE (user_id, send_date, kind)
-                );
+                ALTER TABLE email_notifications
+                ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'daily';
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE email_notifications
+                ADD COLUMN IF NOT EXISTS sent_at TIMESTAMP;
+                """
+            )
+            cur.execute(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.table_constraints
+                        WHERE table_name = 'email_notifications'
+                          AND constraint_name = 'email_notifications_user_id_send_date_key'
+                    ) THEN
+                        ALTER TABLE email_notifications
+                        DROP CONSTRAINT email_notifications_user_id_send_date_key;
+                    END IF;
+                END
+                $$;
+                """
+            )
+            cur.execute(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.table_constraints
+                        WHERE table_name = 'email_notifications'
+                          AND constraint_name = 'email_notifications_user_id_send_date_kind_key'
+                    ) THEN
+                        ALTER TABLE email_notifications
+                        ADD CONSTRAINT email_notifications_user_id_send_date_kind_key
+                        UNIQUE (user_id, send_date, kind);
+                    END IF;
+                END
+                $$;
                 """
             )
         conn.commit()
@@ -206,7 +248,7 @@ def on_startup():
     global _scheduler
     if _scheduler is None:
         scheduler = BackgroundScheduler(timezone=str(TZ))
-        scheduler.add_job(send_daily_emails, "cron", hour=7, minute=0)
+        scheduler.add_job(send_daily_reminders, "interval", minutes=1)
         scheduler.add_job(send_return_reminders, "interval", minutes=5)
         scheduler.start()
         _scheduler = scheduler
@@ -251,6 +293,7 @@ class PreferencesIn(BaseModel):
     timing_pref: Optional[str] = None
     arrival_time: Optional[str] = None
     home_location: Optional[str] = None
+    reminder_time: Optional[str] = None
 
 
 class PasswordChangeIn(BaseModel):
@@ -600,7 +643,7 @@ def preferences_for_user(conn, user_id: int) -> dict:
         cur.execute(
             """
             SELECT allow_ubahn, allow_sbahn, allow_regional, allow_tram,
-                   allow_bus, timing_pref, arrival_time, home_location
+                   allow_bus, timing_pref, arrival_time, home_location, reminder_time
             FROM user_preferences
             WHERE user_id = %s;
             """,
@@ -765,8 +808,10 @@ def build_journey(
     return journeys[0]
 
 
-def send_daily_emails():
-    today = datetime.now(TZ).date()
+def send_daily_reminders():
+    now = datetime.now(TZ)
+    today = now.date()
+    current_hm = now.strftime("%H:%M")
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id, email FROM users;")
@@ -774,15 +819,18 @@ def send_daily_emails():
         for user in users:
             user_id = user["id"]
             email = user["email"]
+            prefs = preferences_for_user(conn, user_id)
+            reminder_time = (prefs or {}).get("reminder_time")
+            if not reminder_time or reminder_time != current_hm:
+                continue
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT 1 FROM email_notifications WHERE user_id = %s AND send_date = %s;",
-                    (user_id, today),
+                    "SELECT 1 FROM email_notifications WHERE user_id = %s AND send_date = %s AND kind = %s;",
+                    (user_id, today, "daily"),
                 )
                 already = cur.fetchone()
             if already:
                 continue
-            prefs = preferences_for_user(conn, user_id)
             classes = classes_for_day(conn, user_id, today)
             if not classes:
                 continue
@@ -807,8 +855,11 @@ def send_daily_emails():
                 continue
             with conn.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO email_notifications (user_id, send_date) VALUES (%s, %s);",
-                    (user_id, today),
+                    """
+                    INSERT INTO email_notifications (user_id, send_date, kind, sent_at)
+                    VALUES (%s, %s, %s, %s);
+                    """,
+                    (user_id, today, "daily", now),
                 )
             conn.commit()
 
@@ -838,7 +889,7 @@ def send_return_reminders():
                 continue
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT 1 FROM reminder_logs WHERE user_id = %s AND send_date = %s AND kind = %s;",
+                    "SELECT 1 FROM email_notifications WHERE user_id = %s AND send_date = %s AND kind = %s;",
                     (user_id, today, "return"),
                 )
                 already = cur.fetchone()
@@ -860,8 +911,11 @@ def send_return_reminders():
                 continue
             with conn.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO reminder_logs (user_id, send_date, kind) VALUES (%s, %s, %s);",
-                    (user_id, today, "return"),
+                    """
+                    INSERT INTO email_notifications (user_id, send_date, kind, sent_at)
+                    VALUES (%s, %s, %s, %s);
+                    """,
+                    (user_id, today, "return", now),
                 )
             conn.commit()
 
@@ -1070,13 +1124,14 @@ def get_preferences(request: Request):
         "timing_pref": "earlier",
         "arrival_time": "",
         "home_location": "",
+        "reminder_time": "",
     }
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT allow_ubahn, allow_sbahn, allow_regional, allow_tram,
-                       allow_bus, timing_pref, arrival_time, home_location
+                       allow_bus, timing_pref, arrival_time, home_location, reminder_time
                 FROM user_preferences
                 WHERE user_id = %s;
                 """,
@@ -1094,6 +1149,7 @@ def get_preferences(request: Request):
         "timing_pref": row["timing_pref"],
         "arrival_time": row["arrival_time"] or "",
         "home_location": row["home_location"] or "",
+        "reminder_time": row["reminder_time"] or "",
     }
 
 
@@ -1104,25 +1160,27 @@ def save_preferences(payload: PreferencesIn, request: Request):
     if timing_pref not in {"earlier", "later"}:
         raise HTTPException(status_code=400, detail="Invalid timing preference")
     current_home = None
-    if payload.home_location is None:
+    current_reminder = None
+    if payload.home_location is None or payload.reminder_time is None:
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT home_location FROM user_preferences WHERE user_id = %s;",
+                    "SELECT home_location, reminder_time FROM user_preferences WHERE user_id = %s;",
                     (user["id"],),
                 )
                 row = cur.fetchone()
                 if row:
                     current_home = row["home_location"]
+                    current_reminder = row["reminder_time"]
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO user_preferences (
                     user_id, allow_ubahn, allow_sbahn, allow_regional,
-                    allow_tram, allow_bus, timing_pref, arrival_time, home_location
+                    allow_tram, allow_bus, timing_pref, arrival_time, home_location, reminder_time
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (user_id) DO UPDATE SET
                     allow_ubahn = EXCLUDED.allow_ubahn,
                     allow_sbahn = EXCLUDED.allow_sbahn,
@@ -1131,7 +1189,8 @@ def save_preferences(payload: PreferencesIn, request: Request):
                     allow_bus = EXCLUDED.allow_bus,
                     timing_pref = EXCLUDED.timing_pref,
                     arrival_time = EXCLUDED.arrival_time,
-                    home_location = EXCLUDED.home_location;
+                    home_location = EXCLUDED.home_location,
+                    reminder_time = EXCLUDED.reminder_time;
                 """,
                 (
                     user["id"],
@@ -1143,6 +1202,7 @@ def save_preferences(payload: PreferencesIn, request: Request):
                     timing_pref,
                     payload.arrival_time or None,
                     payload.home_location if payload.home_location is not None else current_home,
+                    payload.reminder_time if payload.reminder_time is not None else current_reminder,
                 ),
             )
         conn.commit()
