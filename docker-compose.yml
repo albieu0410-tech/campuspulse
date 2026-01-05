@@ -2,13 +2,15 @@ services:
   web:
     build: .
     ports:
-      - "8080:8000"
+      - "8080:8000"   # change to "80:8000" on AWS if you want
     env_file:
       - .env
-    depends_on:
-      - db
+    # IMPORTANT: no depends_on here (AWS uses RDS)
+    # For local dev, you can still start db via profiles
+
   db:
     image: postgres:16
+    profiles: ["local"]          # db only runs when profile "local" is enabled
     environment:
       POSTGRES_USER: campuspulse
       POSTGRES_PASSWORD: campuspulse
