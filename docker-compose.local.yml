@@ -1,0 +1,11 @@
+services:
+  web:
+    environment:
+      DB_HOST: host.docker.internal
+      DB_PORT: "5433"
+      DB_NAME: campuspulse
+      DB_USER: campuspulse
+      DB_PASSWORD: campuspulse
+      DB_SSLMODE: disable
+    depends_on:
+      - db
